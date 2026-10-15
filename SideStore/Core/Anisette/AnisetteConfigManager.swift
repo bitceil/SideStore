@@ -130,7 +130,13 @@ public actor AnisetteConfigManager {
             return config
         }()
 
-        let resolvedClientInfo   = (udClientInfo?.isEmpty == false ? udClientInfo : fileConfig?.clientInfo) ?? AppConstants.Anisette.defaultClientInfo
+        // Older servers persisted an Xcode identity that Apple's GSA edge now rejects.
+        // Ignore only that stale value so legitimate non-Xcode custom identities still work.
+        let clientInfoOverrides = [udClientInfo, fileConfig?.clientInfo]
+        let resolvedClientInfo = clientInfoOverrides
+            .compactMap { $0?.isEmpty == false ? $0 : nil }
+            .first { !$0.contains("com.apple.dt.Xcode") }
+            ?? AppConstants.Anisette.defaultClientInfo
         let resolvedUserAgent    = (udUserAgent?.isEmpty == false ? udUserAgent : fileConfig?.userAgent) ?? AppConstants.Anisette.defaultUserAgent
         let resolvedDeviceID     = (udDeviceID?.isEmpty == false ? udDeviceID : fileConfig?.customDeviceID)
         let resolvedLocalUserID  = (udLocalUserID?.isEmpty == false ? udLocalUserID : fileConfig?.customLocalUserID)
@@ -172,14 +178,28 @@ public actor AnisetteConfigManager {
     }
     
     public func saveConfig(_ config: AnisetteConfig) {
+        // Keep built-in values as defaults rather than pinning them as overrides.
+        let clientInfoOverride = config.clientInfo == AppConstants.Anisette.defaultClientInfo ? "" : config.clientInfo
+        let userAgentOverride = config.userAgent == AppConstants.Anisette.defaultUserAgent ? "" : config.userAgent
+        let persistedConfig = AnisetteConfig(
+            clientInfo: clientInfoOverride,
+            userAgent: userAgentOverride,
+            customDeviceID: config.customDeviceID,
+            customLocalUserID: config.customLocalUserID,
+            customLocale: config.customLocale,
+            customTimeZone: config.customTimeZone,
+            customXcodeVersion: config.customXcodeVersion,
+            customSerialNumber: config.customSerialNumber,
+            customRoutingInfo: config.customRoutingInfo
+        )
         let encoder = Foundation.JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
-        if let data = try? encoder.encode(config) {
+        if let data = try? encoder.encode(persistedConfig) {
             try? data.write(to: configFileURL, options: .atomic)
         }
         let ud = UserDefaults.standard
-        ud.customAnisetteClientInfo   = config.clientInfo
-        ud.customAnisetteUserAgent    = config.userAgent
+        ud.customAnisetteClientInfo   = clientInfoOverride.isEmpty ? nil : clientInfoOverride
+        ud.customAnisetteUserAgent    = userAgentOverride.isEmpty ? nil : userAgentOverride
         ud.customAnisetteDeviceID     = config.customDeviceID
         ud.customAnisetteLocalUserID  = config.customLocalUserID
         ud.customAnisetteLocale       = config.customLocale
